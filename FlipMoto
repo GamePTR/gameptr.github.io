@@ -1,0 +1,194 @@
+#include <graphics.h>  
+#include <conio.h>
+#include <time.h>
+#include "EasyXPng.h"
+#include "Timer.h"
+#include <vector>
+using namespace std;
+#pragma comment(lib,"Winmm.lib")
+#define PI 3.14159265359
+#define  WIDTH 1000  
+#define  HEIGHT 800
+#define wheelradius 40		//轮半径
+#define halfbody_length 60	//半身长
+#define halfbody_height 20	//半身高	
+#define center_x WIDTH/2		//中心x坐标
+#define gravity 2			// 重力加速度
+#define linenumber 6		//轮轴数
+#define a 10					//加速度
+#define a_y 30				//跳跃冲量
+#define w_a	PI/50			//轮转动加速度
+#define b_a PI/800			//身转动加速度
+#define vMAX 30				//最大速度
+enum carStatus // 枚举类型，游戏角色所有的可能状态
+{
+	still,runleft,runright,jump,jumpleft,jumpright,die
+};
+class Car		//车类
+{
+public:
+	carStatus playerStatus; // 当前的状态
+	float vx,vy;			// 速度
+	float center_y;			//中心y坐标
+	float frontwheel_x;		//前轮
+	float frontwheel_y;	
+	float rearwheel_x;		//后轮
+	float rearwheel_y;
+	float top_x;				//上棱点
+	float top_y;
+	float low_x;				//下棱点
+	float low_y;
+	float wheel_angle[linenumber];			//轮轴角度集
+	float car_angle;				//车身倾斜角度
+	void initialize()		//数据初始化
+	{
+		vx=vy=0;
+		center_y=HEIGHT/2;
+		playerStatus=still;
+		frontwheel_x=center_x-halfbody_length;//	前轮位置
+		frontwheel_y=center_y;
+		rearwheel_x=center_x+halfbody_length;//后轮位置
+		rearwheel_y=center_y;
+		top_x=center_x;
+		top_y=center_y-halfbody_height;
+		low_x=center_x;
+		low_y=center_y+halfbody_height;
+		car_angle=0;
+		int i;
+		for(i=0;i<linenumber;i++)
+			wheel_angle[i]=PI*i/3;
+	}
+	void runRight() // 游戏角色向右跑
+	{
+		if (playerStatus == jumpleft || playerStatus==jumpright || playerStatus==jump) // 如果是起跳状态
+		{
+			playerStatus=jumpright;
+		}
+		else if (playerStatus != runright) // 如果之前角色状态在地面且不是向右奔跑
+		{
+			playerStatus=runright;
+		}	
+		vx+=a*0.5;
+			if(vx>=vMAX)
+				vx=vMAX;
+	}
+	void runLeft() // 游戏角色向左奔跑
+	{
+		if (playerStatus == jumpleft || playerStatus==jumpright || playerStatus==jump) // 如果是起跳状态
+		{
+			playerStatus=jumpleft;
+		}
+		else if(playerStatus != runleft) // 如果之前角色状态不是向左奔跑
+		{
+			playerStatus=runleft;
+		}	
+		vx-=a*0.5;
+			if(vx<=-vMAX)
+				vx=-vMAX;
+	}
+	void beginJump() // 按下w或向上方向键后，游戏角色跳跃的处理
+	{
+		if (playerStatus!=jumpleft && playerStatus!=jumpright && playerStatus!=jump) // 在地上
+		{
+			if (playerStatus==runleft )  // 起跳前是向左跑状态
+			{	
+				playerStatus = jumpleft; // 切换到向左起跳状态
+			}
+			if (playerStatus==runright )// 起跳前是向右跑
+			{	
+				playerStatus = jumpright;// 切换到向右起跳状态
+			}
+			if (playerStatus==still)
+			{
+				playerStatus = jump;		//切换到跳跃模式
+			}
+			vy = -a_y;		// 给角色一个向上的初速度
+
+		}
+	}
+	void updateXY() // 更新玩家坐标
+	{
+		vy += gravity; // y方向速度受重力影响变化
+		if(playerStatus==jump || playerStatus==jumpleft || playerStatus==jumpright)		//在空中
+		{
+			car_angle -= b_a*vx;//车身偏转角
+			if(car_angle>=2*PI)
+				car_angle-=2*PI;
+			if(car_angle<=-2*PI)
+				car_angle+=2*PI;
+			center_y += vy;  // y方向位置受速度影响变化
+			frontwheel_x = -halfbody_length*cos(car_angle) +center_x;	//左轮位置
+			frontwheel_y = halfbody_length*sin(car_angle) +center_y;
+			rearwheel_x = halfbody_length*cos(car_angle) +center_x;	//右轮位置
+			rearwheel_y = -halfbody_length*sin(car_angle) +center_y;
+			top_x= -halfbody_height*cos(car_angle-PI/2)+center_x;//上棱点
+			top_y= halfbody_height*sin(car_angle-PI/2)+center_y;
+			low_x= halfbody_height*cos(car_angle-PI/2)+center_x; //下棱点
+			low_y= -halfbody_height*sin(car_angle-PI/2)+center_y;
+		}
+		int i;
+		for(i=0;i<linenumber;i++)		//针的角度改变
+		{
+			wheel_angle[i]-=w_a*vx*0.1;
+			if(wheel_angle[i]>=2*PI)
+				wheel_angle[i]-=2*PI;
+			if(wheel_angle[i]<=-2*PI)
+				wheel_angle[i]+=2*PI;
+		}
+		
+	}
+	void draw()// 显示相关信息	
+	{
+		circle(frontwheel_x,frontwheel_y,wheelradius);
+		circle(rearwheel_x,rearwheel_y,wheelradius);
+		int points[] = {frontwheel_x,frontwheel_y,top_x,top_y,rearwheel_x,rearwheel_y,low_x,low_y};
+		drawpoly(4, points);
+		float xEnd,yEnd; // 针的终点位置坐标（针起始位置为圆心）
+		for (int i=0;i<linenumber;i++) // 对所有旋转针进行遍历
+		{ 
+			xEnd = wheelradius*cos(-wheel_angle[i]) +frontwheel_x; // 计算前针的末端坐标
+			yEnd = wheelradius*sin(-wheel_angle[i]) +frontwheel_y;
+			setlinecolor(BLACK); // 设定旋转针的颜色为
+			setlinestyle(PS_SOLID | PS_JOIN_BEVEL, 3);
+			line(frontwheel_x,frontwheel_y,xEnd,yEnd);
+
+			xEnd = wheelradius*cos(-wheel_angle[i]) +rearwheel_x; // 计算后针的末端坐标
+			yEnd = wheelradius*sin(-wheel_angle[i]) +rearwheel_y;
+			
+			line(rearwheel_x,rearwheel_y,xEnd,yEnd);
+		}
+
+	}
+};
+Car car;  // 定义玩家控制的游戏角色对象
+Timer timer;  // 用于精确延时
+int main()
+{
+	srand(time(0)); // 初始化随机数种子
+	initgraph(WIDTH,HEIGHT); // 新开一个画面
+	car.initialize(); // 玩家初始化
+	setbkcolor(RGB(255,211,155));
+	cleardevice();
+	BeginBatchDraw(); // 开始批量绘制
+	while(1)
+	{
+		if (kbhit()) // 当按键时，切换角色显示图片，更改位置
+		{
+			if (GetAsyncKeyState(VK_RIGHT)  || GetAsyncKeyState('D'))  // 按下D键或右方向键
+				car.runRight();
+			else if (GetAsyncKeyState(VK_LEFT) || GetAsyncKeyState('A'))// 按下A键或左方向键
+				car.runLeft();
+			else if (GetAsyncKeyState(VK_UP)  || GetAsyncKeyState('W'))     // 按下W键或上方向键
+				car.beginJump();
+		}
+		
+		car.updateXY();
+		car.draw();			// 显示玩家相关信息
+		FlushBatchDraw();	// 批量绘制
+		timer.Sleep(50);	// 暂停若干毫秒
+		cleardevice();
+	}
+	// 按任意键退出
+	_getch();
+	closegraph();
+} 
