@@ -4,10 +4,12 @@
 #include "EasyXPng.h"
 #include "Timer.h"
 #include <vector>
+#include<math.h>
 using namespace std;
 #pragma comment(lib,"Winmm.lib")
+
 #define PI 3.14159265359
-#define  WIDTH 1000  
+#define  WIDTH 1200  
 #define  HEIGHT 800
 #define wheelradius 40		//轮半径
 #define halfbody_length 60	//半身长
@@ -15,20 +17,132 @@ using namespace std;
 #define center_x WIDTH/2		//中心x坐标
 #define gravity 2			// 重力加速度
 #define linenumber 6		//轮轴数
-#define a 10					//加速度
+#define a 10				//加速度
 #define a_y 30				//跳跃冲量
 #define w_a	PI/50			//轮转动加速度
 #define b_a PI/800			//身转动加速度
 #define vMAX 30				//最大速度
+#define brick_length 40			//每个砖块高
+#define brick_width 20				//每个宽砖块
+
+
 enum carStatus // 枚举类型，游戏角色所有的可能状态
 {
-	still,runleft,runright,jump,jumpleft,jumpright,die
+	still,runleft,runright,jump,jumpleft,jumpright,down,downleft,downright,
+};
+enum landflatstatus//枚举地面——>上下坡或平底峡谷
+{
+	flat,up,downto,ditch
+};
+int randBetweenMinMax(int min,int max)
+{
+	int r = rand() % (max-min+1) + min;
+	return r;
+}
+void PlayMusicOnce(TCHAR fileName[80]) // 播放一次音乐函数
+{
+	TCHAR cmdString1[50];
+	_stprintf(cmdString1, _T("open %s alias tmpmusic"), fileName); // 生成命令字符串
+	mciSendString(_T("close tmpmusic"), NULL, 0, NULL); // 先把前面一次的音乐关闭
+	mciSendString(cmdString1, NULL, 0, NULL); // 打开音乐
+	mciSendString(_T("play tmpmusic"), NULL, 0, NULL); // 仅播放一次
+}
+
+class landflat  // 地面类
+{
+public:
+	float left;
+	float top;
+	float right;
+	float bottom;
+	int brick_color[3];		//砖块颜色
+
+	void initialize() // 初始化
+	{
+		brick_color[0]=0;
+		brick_color[1]=0;
+		brick_color[2]=105;
+		left=0;
+		top=HEIGHT*3/4;
+		right=brick_length;
+		bottom=top+brick_width;
+	}
+	void draw(float px,float py)// 显示相关信息	
+	{
+		setcolor(RGB(brick_color[0],brick_color[1],brick_color[2]));
+		rectangle(left-px,top-py,right-px,bottom-py);
+	}
+};
+class landup
+{
+public:
+
+};
+class landdown
+{
+public:
+
+};
+class Scene		//场景类
+{
+public:
+	vector<landflat> landflats;		// 多个地面
+	int level;				// 玩家玩到第几关
+	int lastlevel;			// 上一次玩到第几关
+
+	void initialize() // 初始化
+	{
+		if (landflats.size()==0) // 游戏才开始，默认第一关
+		{
+			level = 1;
+			lastlevel = 1;
+		}
+		// 第一关才开始要初始化。升级后，清空，继续开始。不升级的话，还是用之前地图继续开始。
+		if (landflats.size()==0 || level > lastlevel)  
+		{
+			landflats.clear();// 先清空掉vector
+			// 第一个landflatflat要在游戏角色的正下方
+			landflat landflat1;
+			landflat1.initialize();
+			landflats.push_back(landflat1);
+			for (int i=1;i<100+level*200;i++) // level越大，总长度越长
+			{
+				landflat landflat2;
+				landflat2.initialize();
+				int r1 = randBetweenMinMax(1,30);
+				if (r1>level) // level越大，x方向越不连续
+					landflat2.left = landflat1.left + brick_width;   
+				else
+					landflat2.left = landflat1.left + 2*brick_width;
+
+				landflat2.bottom=landflat2.top+brick_width;
+				landflat2.right= landflat2.left + brick_length;
+				landflats.push_back(landflat2);
+				landflat1 = landflat2;
+			}
+		}
+	}
+	void draw(float px,float py)// 显示相关信息	
+	{
+		// 绘制所有地面
+		for (int i=0;i<landflats.size();i++)
+			landflats[i].draw(px,py);
+		// 显示这是第几关
+		TCHAR s[20]; // 字符串
+		setbkmode(TRANSPARENT); // 文字透明显示
+		_stprintf(s, _T("第 %d 关"), level); // 生成文字字符串
+		settextcolor(RGB(0,50,200));  // 设置文字颜色
+		settextstyle(30, 0, _T("黑体")); // 设置文字大小、字体
+		outtextxy(WIDTH*0.45, 30, s); // 输出文字
+	}
 };
 class Car		//车类
 {
 public:
 	carStatus playerStatus; // 当前的状态
 	float vx,vy;			// 速度
+	float frontwheel_vy;
+	float rearwheel_vy;
 	float center_y;			//中心y坐标
 	float frontwheel_x;		//前轮
 	float frontwheel_y;	
@@ -40,10 +154,12 @@ public:
 	float low_y;
 	float wheel_angle[linenumber];			//轮轴角度集
 	float car_angle;				//车身倾斜角度
+
 	void initialize()		//数据初始化
 	{
-		vx=vy=0;
-		center_y=HEIGHT/2;
+		vx=0;
+		frontwheel_vy=rearwheel_vy=0;
+		center_y=HEIGHT*3/4-wheelradius;
 		playerStatus=still;
 		frontwheel_x=center_x-halfbody_length;//	前轮位置
 		frontwheel_y=center_y;
@@ -60,11 +176,15 @@ public:
 	}
 	void runRight() // 游戏角色向右跑
 	{
-		if (playerStatus == jumpleft || playerStatus==jumpright || playerStatus==jump) // 如果是起跳状态
+		if (playerStatus == jumpleft || playerStatus==jumpright || playerStatus==jump) // 如果向上跳
 		{
 			playerStatus=jumpright;
 		}
-		else if (playerStatus != runright) // 如果之前角色状态在地面且不是向右奔跑
+		if(playerStatus == down || playerStatus == downleft || playerStatus==downright)
+		{
+			playerStatus=downright;
+		}
+		else if (playerStatus == runleft || playerStatus == still) // 如果之前角色状态在地面且不是向右奔跑
 		{
 			playerStatus=runright;
 		}	
@@ -78,7 +198,11 @@ public:
 		{
 			playerStatus=jumpleft;
 		}
-		else if(playerStatus != runleft) // 如果之前角色状态不是向左奔跑
+		if (playerStatus == downleft || playerStatus==downright || playerStatus==down) // 如果是起跳状态
+		{
+			playerStatus=downleft;
+		}
+		else if(playerStatus == runright || playerStatus == still) // 如果之前角色状态不是向左奔跑
 		{
 			playerStatus=runleft;
 		}	
@@ -88,7 +212,7 @@ public:
 	}
 	void beginJump() // 按下w或向上方向键后，游戏角色跳跃的处理
 	{
-		if (playerStatus!=jumpleft && playerStatus!=jumpright && playerStatus!=jump) // 在地上
+		if (playerStatus==still || playerStatus==runleft || playerStatus==runright) // 在地上
 		{
 			if (playerStatus==runleft )  // 起跳前是向左跑状态
 			{	
@@ -102,30 +226,88 @@ public:
 			{
 				playerStatus = jump;		//切换到跳跃模式
 			}
-			vy = -a_y;		// 给角色一个向上的初速度
-
+			frontwheel_vy=rearwheel_vy = -a_y;		// 给角色一个向上的初速度
 		}
 	}
-	void updateXY() // 更新玩家坐标
+	void updateXY(Scene &scene) // 更新玩家坐标
 	{
-		vy += gravity; // y方向速度受重力影响变化
-		if(playerStatus==jump || playerStatus==jumpleft || playerStatus==jumpright)		//在空中
+		if(playerStatus==jump || playerStatus==jumpleft || playerStatus==jumpright  
+			||playerStatus==down  || playerStatus==downleft || playerStatus==downright )		//在空中或要跳
 		{
+			frontwheel_vy += gravity; // y方向速度受重力影响变化
+			rearwheel_vy += gravity;
+			vy=(frontwheel_vy+rearwheel_vy)/2;
+			
 			car_angle -= b_a*vx;//车身偏转角
 			if(car_angle>=2*PI)
 				car_angle-=2*PI;
 			if(car_angle<=-2*PI)
 				car_angle+=2*PI;
+			frontwheel_vy -=car_angle;		//轮子在y轴速度准确值
+			rearwheel_vy +=car_angle;
+			if(abs(vy)<=2 && playerStatus==jumpright)
+				playerStatus=downright;
+			if(abs(vy)<=2 && playerStatus==jumpleft)
+				playerStatus=downleft;
+			if(abs(vy)<=2 && playerStatus==jump)
+				playerStatus=down;
 			center_y += vy;  // y方向位置受速度影响变化
 			frontwheel_x = -halfbody_length*cos(car_angle) +center_x;	//左轮位置
 			frontwheel_y = halfbody_length*sin(car_angle) +center_y;
-			rearwheel_x = halfbody_length*cos(car_angle) +center_x;	//右轮位置
+			rearwheel_x = halfbody_length*cos(car_angle) +center_x;		//右轮位置
 			rearwheel_y = -halfbody_length*sin(car_angle) +center_y;
-			top_x= -halfbody_height*cos(car_angle-PI/2)+center_x;//上棱点
-			top_y= halfbody_height*sin(car_angle-PI/2)+center_y;
-			low_x= halfbody_height*cos(car_angle-PI/2)+center_x; //下棱点
-			low_y= -halfbody_height*sin(car_angle-PI/2)+center_y;
+
+			if(playerStatus == down || playerStatus == downleft || playerStatus == downright)		//下落时考虑着地
+			{
+				for (int i=0;i<scene.landflats.size();i++)   // 对所有地面遍历
+				{
+					if(frontwheel_y >= scene.landflats[i].top-wheelradius)			//左轮碰地则速度为零
+					{
+						frontwheel_y = scene.landflats[i].top-wheelradius;
+						frontwheel_vy=0;
+					}
+					if(rearwheel_y >= scene.landflats[i].top-wheelradius	)			//右轮碰地
+					{
+						rearwheel_y = scene.landflats[i].top-wheelradius;
+						rearwheel_vy=0;
+					}
+
+					if(rearwheel_y == scene.landflats[i].top-wheelradius 
+					  && frontwheel_y == scene.landflats[i].top-wheelradius)
+				
+					{
+						vy=0;
+						if (playerStatus == downleft) // 向左跳，落地后切换到向左跑
+							playerStatus = runleft;
+						if (playerStatus == downright) // 向右跳，落地后切换到向右跑
+							playerStatus = runright;
+						if(playerStatus == down)
+							playerStatus = still;
+						break; // 跳出循环，不需要再对其他地面判断了
+					}
+				}
+			}
 		}
+
+		else if(playerStatus==runright ||playerStatus==runleft || playerStatus==still)			//在地上且未跳
+		{
+			for(int i=0;i<scene.landflats.size();i++)
+			{
+				if (isfrontWheelOnlandflat(scene.landflats[i],vy) )
+				{
+					frontwheel_y = scene.landflats[i].top-wheelradius;
+				}
+				if(isrearWheelOnlandflat(scene.landflats[i],vy))
+				{
+					rearwheel_y = scene.landflats[i].top-wheelradius;
+				}
+			}
+		}
+		center_y=(frontwheel_y+rearwheel_y)/2;
+		top_x= -halfbody_height*cos(car_angle-PI/2)+center_x;//上棱点
+		top_y= halfbody_height*sin(car_angle-PI/2)+center_y;
+		low_x= halfbody_height*cos(car_angle-PI/2)+center_x; //下棱点
+		low_y= -halfbody_height*sin(car_angle-PI/2)+center_y;
 		int i;
 		for(i=0;i<linenumber;i++)		//针的角度改变
 		{
@@ -135,10 +317,10 @@ public:
 			if(wheel_angle[i]<=-2*PI)
 				wheel_angle[i]+=2*PI;
 		}
-		
 	}
 	void draw()// 显示相关信息	
 	{
+		setcolor(BLACK);
 		circle(frontwheel_x,frontwheel_y,wheelradius);
 		circle(rearwheel_x,rearwheel_y,wheelradius);
 		int points[] = {frontwheel_x,frontwheel_y,top_x,top_y,rearwheel_x,rearwheel_y,low_x,low_y};
@@ -159,36 +341,144 @@ public:
 		}
 
 	}
+
+	// 判断游戏角色是否正站在这块地面上，如果是的话返回1，否则返回0
+	int isfrontWheelOnlandflat(landflat &landflat,float ySpeed)  
+	{
+		// 判断是否站在地面上，还需要考虑car的y方向速度情况，速度过快有可能直接穿透地面
+		if (ySpeed<=0) // y轴方向速度小于0，表示正在向上运动，不需要考虑速度的影响
+			ySpeed = 0;
+		if (abs(frontwheel_y+wheelradius-landflat.top) <=2+ySpeed
+			&&frontwheel_x >= landflat.left 
+			&&frontwheel_x <= landflat.right )
+			return 1;
+		else
+			return 0;
+	}
+	int isrearWheelOnlandflat(landflat &landflat,float ySpeed)  
+	{
+	
+		// 判断是否站在地面上，还需要考虑car的y方向速度情况，速度过快有可能直接穿透地面
+		if (ySpeed<=0) // y轴方向速度小于0，表示正在向上运动，不需要考虑速度的影响
+			ySpeed = 0;
+		if (abs(rearwheel_y+wheelradius-landflat.top) <=2+ySpeed
+			&&rearwheel_x >= landflat.left
+			&&rearwheel_x <= landflat.right)
+			return 1;
+		else
+			return 0;
+	}
+	
 };
+
 Car car;  // 定义玩家控制的游戏角色对象
+Scene scene;  // 定义场景全局对象
 Timer timer;  // 用于精确延时
-int main()
-{
+
+void startup()  // 初始化
+{	
+	mciSendString(_T("open science.mp3 alias bkmusic"), NULL, 0, NULL);//打开背景音乐
+	mciSendString(_T("play bkmusic repeat"), NULL, 0, NULL);  // 循环播放
+
 	srand(time(0)); // 初始化随机数种子
-	initgraph(WIDTH,HEIGHT); // 新开一个画面
+	scene.initialize();  // 场景初始化
 	car.initialize(); // 玩家初始化
+	initgraph(WIDTH,HEIGHT); // 新开一个画面
+	
 	setbkcolor(RGB(255,211,155));
 	cleardevice();
 	BeginBatchDraw(); // 开始批量绘制
-	while(1)
+}
+void updateWithInput() // 和输入有关的更新
+{
+
+	if (kbhit()) // 当按键时，更改位置
 	{
-		if (kbhit()) // 当按键时，切换角色显示图片，更改位置
+		if (GetAsyncKeyState(VK_RIGHT) || GetAsyncKeyState('D'))  // 按下D键或右方向键
 		{
-			if (GetAsyncKeyState(VK_RIGHT)  || GetAsyncKeyState('D'))  // 按下D键或右方向键
-				car.runRight();
-			else if (GetAsyncKeyState(VK_LEFT) || GetAsyncKeyState('A'))// 按下A键或左方向键
-				car.runLeft();
-			else if (GetAsyncKeyState(VK_UP)  || GetAsyncKeyState('W'))     // 按下W键或上方向键
-				car.beginJump();
+			car.runRight();
+
 		}
+		else if (GetAsyncKeyState(VK_LEFT) || GetAsyncKeyState('A'))// 按下A键或左方向键
+		{
+			car.runLeft();
+		}
+		else if (GetAsyncKeyState(VK_UP)  || GetAsyncKeyState('W'))     // 按下W键或上方向键
+		{
+			car.beginJump();
+		}
+	}
+	
+}	
+void updateWithoutInput() // 和输入无关的更新
+{
+	car.updateXY(scene);
+
+}
+void show()  // 显示
+{
+	
+	scene.draw(0,0);   // 显示场景相关信息
+	car.draw();			// 显示玩家相关信息
+	FlushBatchDraw();	// 批量绘制
+	timer.Sleep(40);	// 暂停若干毫秒
+}
+int main (void)
+{
+	startup();  	// 初始化
+	while (1)       // 一直循环
+	{
+		if(car.playerStatus==down)
+		{
+			TCHAR s[] = _T("down");
+			outtextxy(10, 20, s);
+		}
+		if(car.playerStatus==downleft)
+		{
+			TCHAR s[] = _T("downleft");
+			outtextxy(10, 20, s);
+		}
+		if(car.playerStatus==downright)
+		{
+			TCHAR s[] = _T("downright");
+			outtextxy(10, 20, s);
+		}
+		if(car.playerStatus==still)
+		{
+			TCHAR s[] = _T("still");
+			outtextxy(10, 20, s);
+		}
+		if(car.playerStatus==runleft)
+		{
+			TCHAR s[] = _T("runleft");
+			outtextxy(10, 20, s);
+		}
+		if(car.playerStatus==runright)
+		{
+			TCHAR s[] = _T("runright");
+			outtextxy(10, 20, s);
+		}
+		if(car.playerStatus==jump)
+		{
+			TCHAR s[] = _T("jump");
+			outtextxy(10, 20, s);
+		}
+		if(car.playerStatus==jumpleft)
+		{
+			TCHAR s[] = _T("jumpleft");
+			outtextxy(10, 20, s);
+		}
+		if(car.playerStatus==jumpright)
+		{
+			TCHAR s[] = _T("jumpright");
+			outtextxy(10, 20, s);
+		}
+		updateWithoutInput(); // 与输入无关的更新
+		updateWithInput();    // 与输入有关的更新
+		show();  // 显示
 		
-		car.updateXY();
-		car.draw();			// 显示玩家相关信息
-		FlushBatchDraw();	// 批量绘制
-		timer.Sleep(50);	// 暂停若干毫秒
+		
 		cleardevice();
 	}
-	// 按任意键退出
-	_getch();
-	closegraph();
-} 
+	return 0;
+}
